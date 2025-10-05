@@ -6,6 +6,7 @@ const path = require('path');
 const { MongoClient, ObjectId } = require('mongodb');
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (required for Render)
 const PORT = process.env.PORT || 3000;
 
 // MongoDB Configuration
@@ -71,7 +72,7 @@ async function startServer() {
       }),
       cookie: { 
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+        secure: false, // Set to false for now to allow HTTP cookies
         httpOnly: true,
         sameSite: 'lax'
       }
@@ -126,13 +127,25 @@ async function startServer() {
       try {
         const { username, password } = req.body;
         
+        console.log('Login attempt for username:', username);
+        
         const user = await usersCollection.findOne({ username });
         if (!user || user.password !== password) {
+          console.log('Invalid credentials for:', username);
           return res.status(401).json({ error: 'Invalid credentials' });
         }
         
         req.session.userId = username;
-        res.json({ message: 'Login successful', username });
+        
+        // Save session explicitly
+        req.session.save((err) => {
+          if (err) {
+            console.error('Session save error:', err);
+            return res.status(500).json({ error: 'Session error' });
+          }
+          console.log('Login successful for:', username, 'Session ID:', req.sessionID);
+          res.json({ message: 'Login successful', username });
+        });
       } catch (err) {
         console.error('Login error:', err);
         res.status(500).json({ error: 'Server error' });
@@ -147,7 +160,8 @@ async function startServer() {
     
     // Check session
     app.get('/api/check-session', (req, res) => {
-      if (req.session.userId) {
+      console.log('Check session - Session ID:', req.sessionID, 'User ID:', req.session?.userId);
+      if (req.session && req.session.userId) {
         res.json({ authenticated: true, username: req.session.userId });
       } else {
         res.json({ authenticated: false });
