@@ -531,6 +531,48 @@ async function startServer() {
         }
     });
 
+    // Update a game
+    app.put('/api/games/:id', requireAuth, async (req, res) => {
+        try {
+            const gameId = req.params.id;
+            const { title, htmlContent } = req.body;
+
+            if (!title || !htmlContent) {
+                return res.status(400).json({ error: 'Title and HTML content are required' });
+            }
+
+            const game = await gamesCollection.findOne({
+                _id: new ObjectId(gameId)
+            });
+
+            if (!game) {
+                return res.status(404).json({ error: 'Game not found' });
+            }
+
+            // Check if user is author or admin
+            if (game.author !== req.session.userId && !req.session.isAdmin) {
+                return res.status(403).json({ error: 'You are not authorized to update this game' });
+            }
+
+            const result = await gamesCollection.updateOne(
+                { _id: new ObjectId(gameId) },
+                { $set: {
+                    title,
+                    htmlContent
+                }}
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({ error: 'Game not found' });
+            }
+
+            res.json({ message: 'Game updated successfully' });
+        } catch (err) {
+            console.error('Update game error:', err);
+            res.status(500).json({ error: 'Server error' });
+        }
+    });
+
     // Delete a game
     app.delete('/api/games/:id', requireAuth, async (req, res) => {
         try {

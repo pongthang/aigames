@@ -550,6 +550,25 @@
         </div>
     </div>
 
+    <!-- Update Game Modal -->
+    <div class="modal" id="updateGameModal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('updateGameModal')">&times;</span>
+            <h2>Update Game</h2>
+            <input type="hidden" id="updateGameId">
+            <div class="form-group">
+                <label>Game Title</label>
+                <input type="text" id="updateGameTitle" placeholder="Enter game title">
+            </div>
+            <div class="form-group">
+                <label>HTML Content</label>
+                <textarea id="updateGameHtml" placeholder="Paste your HTML game code here..."></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="updateGame()">Save Changes</button>
+            <div id="updateError" class="error"></div>
+        </div>
+    </div>
+
     <script>
         let currentGameId = null;
         let isAuthenticated = false;
@@ -956,7 +975,10 @@
                             <div class="stat">👎 ${game.dislikesCount}</div>
                             <div class="stat">💬 ${game.commentsCount}</div>
                         </div>
-                        <button class="btn btn-primary" style="background: #ef4444; margin-top: 15px;" onclick="deleteGame('${game.id}')">Delete</button>
+                        <div style="margin-top: 15px; display: flex; gap: 10px;">
+                            <button class="btn btn-secondary" onclick="showUpdateGame('${game.id}')">Update</button>
+                            <button class="btn btn-primary" style="background: #ef4444;" onclick="deleteGame('${game.id}')">Delete</button>
+                        </div>
                     </div>
                 `).join('');
             } catch (err) {
@@ -1013,6 +1035,55 @@
                 }
             } catch (err) {
                 document.getElementById('editProfileError').textContent = 'An error occurred.';
+            }
+        }
+
+        async function showUpdateGame(gameId) {
+            try {
+                const res = await fetch(`/api/games/${gameId}`);
+                if (!res.ok) {
+                    throw new Error('Game not found');
+                }
+                const game = await res.json();
+
+                document.getElementById('updateGameId').value = game.id;
+                document.getElementById('updateGameTitle').value = game.title;
+                document.getElementById('updateGameHtml').value = game.htmlContent;
+
+                document.getElementById('updateGameModal').classList.add('active');
+            } catch (err) {
+                alert('Failed to load game data for updating: ' + err.message);
+            }
+        }
+
+        async function updateGame() {
+            const gameId = document.getElementById('updateGameId').value;
+            const title = document.getElementById('updateGameTitle').value;
+            const htmlContent = document.getElementById('updateGameHtml').value;
+
+            if (!title || !htmlContent) {
+                document.getElementById('updateError').textContent = 'Please fill all fields';
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/games/${gameId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, htmlContent })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    closeModal('updateGameModal');
+                    showProfilePage(); // Refresh the profile page
+                    alert('Game updated successfully!');
+                } else {
+                    document.getElementById('updateError').textContent = data.error;
+                }
+            } catch (err) {
+                document.getElementById('updateError').textContent = 'Failed to update game';
             }
         }
 
