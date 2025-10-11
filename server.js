@@ -96,10 +96,10 @@ async function startServer() {
     // Register
     app.post('/api/register', async (req, res) => {
       try {
-        const { username, password } = req.body;
+        const { username, password, fullName, schoolName, class: className, email, phoneNumber } = req.body;
         
-        if (!username || !password) {
-          return res.status(400).json({ error: 'Username and password required' });
+        if (!username || !password || !fullName || !schoolName || !className) {
+          return res.status(400).json({ error: 'Username, password, full name, school name, and class are required' });
         }
         
         // Check if user already exists
@@ -111,7 +111,12 @@ async function startServer() {
         // Create new user
         await usersCollection.insertOne({ 
           username, 
-          password,
+          password, // In a real app, you should hash this password
+          fullName,
+          schoolName,
+          class: className,
+          email: email || '',
+          phoneNumber: phoneNumber || '',
           createdAt: new Date()
         });
         
@@ -173,6 +178,53 @@ async function startServer() {
         res.json({ authenticated: false });
       }
     });
+
+    // Get user profile
+    app.get('/api/user/profile', requireAuth, async (req, res) => {
+        try {
+            const user = await usersCollection.findOne({ username: req.session.userId });
+            if (!user) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+            // Don't send password back
+            const { password, ...profile } = user;
+            res.json(profile);
+        } catch (err) {
+            console.error('Get profile error:', err);
+            res.status(500).json({ error: 'Server error' });
+        }
+    });
+
+    // Update user profile
+    app.put('/api/user/profile', requireAuth, async (req, res) => {
+        try {
+            const { fullName, schoolName, class: className, email, phoneNumber } = req.body;
+
+            if (!fullName || !schoolName || !className) {
+                return res.status(400).json({ error: 'Full name, school name, and class are required' });
+            }
+
+            const result = await usersCollection.updateOne(
+                { username: req.session.userId },
+                { $set: {
+                    fullName,
+                    schoolName,
+                    class: className,
+                    email: email || '',
+                    phoneNumber: phoneNumber || ''
+                }}
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+
+            res.json({ message: 'Profile updated successfully' });
+        } catch (err) {
+            console.error('Update profile error:', err);
+            res.status(500).json({ error: 'Server error' });
+        }
+    });
     
     // Create game
     app.post('/api/games', requireAuth, async (req, res) => {
@@ -210,15 +262,25 @@ async function startServer() {
           .find({})
           .toArray();
         
+        const authorUsernames = [...new Set(games.map(g => g.author))];
+        const authors = await usersCollection.find({ username: { $in: authorUsernames } }).project({ password: 0 }).toArray();
+        const authorMap = authors.reduce((acc, author) => {
+            acc[author.username] = author;
+            return acc;
+        }, {});
+
         const gamesData = await Promise.all(games.map(async (game) => {
           const commentsCount = await commentsCollection.countDocuments({ 
             gameId: game._id.toString() 
           });
           
+          const authorDetails = authorMap[game.author];
+
           return {
             id: game._id.toString(),
             title: game.title,
-            author: game.author,
+            author: authorDetails ? authorDetails.fullName : game.author,
+            authorUsername: game.author,
             likesCount: game.likes.length,
             dislikesCount: game.dislikes.length,
             commentsCount,
@@ -249,10 +311,15 @@ async function startServer() {
           return res.status(404).json({ error: 'Game not found' });
         }
         
+        const author = await usersCollection.findOne({ username: game.author });
+
         res.json({
           id: game._id.toString(),
           title: game.title,
-          author: game.author,
+          author: author ? author.fullName : game.author,
+          authorUsername: game.author,
+          authorSchool: author ? author.schoolName : '',
+          authorClass: author ? author.class : '',
           htmlContent: game.htmlContent,
           likesCount: game.likes.length,
           dislikesCount: game.dislikes.length,
@@ -434,14 +501,23 @@ async function startServer() {
                 userGames = await gamesCollection.find({ author: req.session.userId }).sort({ createdAt: -1 }).toArray();
             }
 
+            const authorUsernames = [...new Set(userGames.map(g => g.author))];
+            const authors = await usersCollection.find({ username: { $in: authorUsernames } }).project({ password: 0 }).toArray();
+            const authorMap = authors.reduce((acc, author) => {
+                acc[author.username] = author;
+                return acc;
+            }, {});
+
             const gamesData = await Promise.all(userGames.map(async (game) => {
                 const commentsCount = await commentsCollection.countDocuments({
                     gameId: game._id.toString()
                 });
+                const authorDetails = authorMap[game.author];
                 return {
                     id: game._id.toString(),
                     title: game.title,
-                    author: game.author,
+                    author: authorDetails ? authorDetails.fullName : game.author,
+                    authorUsername: game.author,
                     likesCount: game.likes.length,
                     dislikesCount: game.dislikes.length,
                     commentsCount,
