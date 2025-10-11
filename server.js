@@ -165,8 +165,14 @@ async function startServer() {
     
     // Logout
     app.post('/api/logout', (req, res) => {
-      req.session.destroy();
-      res.json({ message: 'Logout successful' });
+      req.session.destroy(err => {
+        if (err) {
+          console.log('Error destroying session:', err);
+          return res.status(500).json({ error: 'Logout failed' });
+        }
+        res.clearCookie('connect.sid');
+        res.json({ message: 'Logout successful' });
+      });
     });
     
     // Check session
