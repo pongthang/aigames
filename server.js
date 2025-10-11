@@ -10,7 +10,7 @@ app.set('trust proxy', 1); // Trust first proxy (required for Render)
 const PORT = process.env.PORT || 3000;
 
 // MongoDB Configuration
-const MONGODB_URI = process.env.MONGODB_URI || 'your-mongodb-connection-uri-here';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb connection string here';
 const DB_NAME = 'html_games_platform';
 
 let db;
@@ -129,13 +129,19 @@ async function startServer() {
         
         console.log('Login attempt for username:', username);
         
-        const user = await usersCollection.findOne({ username });
-        if (!user || user.password !== password) {
-          console.log('Invalid credentials for:', username);
-          return res.status(401).json({ error: 'Invalid credentials' });
+        let isAdmin = false;
+        if (username === 'admin_gamer' && password === 'gamer@123') {
+            isAdmin = true;
+        } else {
+            const user = await usersCollection.findOne({ username });
+            if (!user || user.password !== password) {
+              console.log('Invalid credentials for:', username);
+              return res.status(401).json({ error: 'Invalid credentials' });
+            }
         }
         
         req.session.userId = username;
+        req.session.isAdmin = isAdmin;
         
         // Save session explicitly
         req.session.save((err) => {
@@ -144,7 +150,7 @@ async function startServer() {
             return res.status(500).json({ error: 'Session error' });
           }
           console.log('Login successful for:', username, 'Session ID:', req.sessionID);
-          res.json({ message: 'Login successful', username });
+          res.json({ message: 'Login successful', username, isAdmin });
         });
       } catch (err) {
         console.error('Login error:', err);
@@ -162,7 +168,7 @@ async function startServer() {
     app.get('/api/check-session', (req, res) => {
       console.log('Check session - Session ID:', req.sessionID, 'User ID:', req.session?.userId);
       if (req.session && req.session.userId) {
-        res.json({ authenticated: true, username: req.session.userId });
+        res.json({ authenticated: true, username: req.session.userId, isAdmin: req.session.isAdmin || false });
       } else {
         res.json({ authenticated: false });
       }
@@ -202,7 +208,6 @@ async function startServer() {
       try {
         const games = await gamesCollection
           .find({})
-          .sort({ createdAt: -1 })
           .toArray();
         
         const gamesData = await Promise.all(games.map(async (game) => {
@@ -219,9 +224,12 @@ async function startServer() {
             commentsCount,
             createdAt: game.createdAt,
             userLiked: req.session && req.session.userId ? game.likes.includes(req.session.userId) : false,
-            userDisliked: req.session && req.session.userId ? game.dislikes.includes(req.session.userId) : false
+            userDisliked: req.session && req.session.userId ? game.dislikes.includes(req.session.userId) : false,
+            popularity: game.likes.length - game.dislikes.length + commentsCount
           };
         }));
+
+        gamesData.sort((a, b) => b.popularity - a.popularity);
         
         res.json(gamesData);
       } catch (err) {
@@ -412,6 +420,67 @@ async function startServer() {
         console.error('Add comment error:', err);
         res.status(500).json({ error: 'Server error' });
       }
+    });
+
+    // Get user's games for profile page
+    app.get('/api/my-games', requireAuth, async (req, res) => {
+        try {
+            let userGames;
+            if (req.session.isAdmin) {
+                // Admin sees all games
+                userGames = await gamesCollection.find({}).sort({ createdAt: -1 }).toArray();
+            } else {
+                // Regular user sees their own games
+                userGames = await gamesCollection.find({ author: req.session.userId }).sort({ createdAt: -1 }).toArray();
+            }
+
+            const gamesData = await Promise.all(userGames.map(async (game) => {
+                const commentsCount = await commentsCollection.countDocuments({
+                    gameId: game._id.toString()
+                });
+                return {
+                    id: game._id.toString(),
+                    title: game.title,
+                    author: game.author,
+                    likesCount: game.likes.length,
+                    dislikesCount: game.dislikes.length,
+                    commentsCount,
+                };
+            }));
+
+            res.json(gamesData);
+        } catch (err) {
+            console.error('Get my-games error:', err);
+            res.status(500).json({ error: 'Server error' });
+        }
+    });
+
+    // Delete a game
+    app.delete('/api/games/:id', requireAuth, async (req, res) => {
+        try {
+            const gameId = req.params.id;
+            const game = await gamesCollection.findOne({
+                _id: new ObjectId(gameId)
+            });
+
+            if (!game) {
+                return res.status(404).json({ error: 'Game not found' });
+            }
+
+            // Check if user is author or admin
+            if (game.author !== req.session.userId && !req.session.isAdmin) {
+                return res.status(403).json({ error: 'You are not authorized to delete this game' });
+            }
+
+            // Delete game and its comments
+            await gamesCollection.deleteOne({ _id: new ObjectId(gameId) });
+            await commentsCollection.deleteMany({ gameId: gameId });
+
+            res.json({ message: 'Game deleted successfully' });
+        } catch (err) {
+            console.error('Delete game error:', err);
+            res.status(500).json({ error: 'Server error' });
+        }
     });
     
     // Play game in standalone page
